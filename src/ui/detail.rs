@@ -15,24 +15,56 @@ pub fn build_detail_page(
     toast_overlay: &adw::ToastOverlay,
 ) -> adw::NavigationPage {
     let toolbar = adw::ToolbarView::new();
-    toolbar.add_top_bar(&adw::HeaderBar::new());
+    let header = adw::HeaderBar::new();
+    header.add_css_class("flat");
+    toolbar.add_top_bar(&header);
 
     let scroll = gtk::ScrolledWindow::builder()
         .vexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .build();
 
-    let content = gtk::Box::new(gtk::Orientation::Horizontal, 24);
-    content.set_margin_start(32);
-    content.set_margin_end(32);
-    content.set_margin_top(24);
-    content.set_margin_bottom(24);
+    let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    outer.add_css_class("detail-page-bg");
+
+    let hero = gtk::Overlay::new();
+    hero.set_size_request(-1, 380);
+    hero.set_overflow(gtk::Overflow::Hidden);
+
+    if let Some(art) = &item.art {
+        let c = state.client.borrow();
+        if let Some(ref plex) = *c {
+            let art_url = plex.art_url(art, 1920, 1080);
+            let backdrop = gtk::Picture::builder()
+                .content_fit(gtk::ContentFit::Cover)
+                .css_classes(["detail-backdrop"])
+                .hexpand(true)
+                .vexpand(true)
+                .build();
+            util::load_image_async(&backdrop, &art_url, state.image_cache.clone(), plex.http.clone());
+            hero.set_child(Some(&backdrop));
+        }
+    }
+
+    let gradient = gtk::Box::builder()
+        .css_classes(["detail-gradient"])
+        .hexpand(true)
+        .vexpand(true)
+        .build();
+    hero.add_overlay(&gradient);
+
+    let overlay_box = gtk::Box::new(gtk::Orientation::Horizontal, 24);
+    overlay_box.set_margin_start(40);
+    overlay_box.set_margin_end(40);
+    overlay_box.set_margin_bottom(32);
+    overlay_box.set_valign(gtk::Align::End);
+    overlay_box.set_halign(gtk::Align::Fill);
 
     let poster = gtk::Picture::builder()
-        .width_request(250)
-        .height_request(375)
-        .css_classes(["poster-image"])
-        .valign(gtk::Align::Start)
+        .width_request(150)
+        .height_request(225)
+        .css_classes(["detail-poster"])
+        .valign(gtk::Align::End)
         .build();
 
     if let Some(thumb) = &item.thumb {
@@ -42,11 +74,11 @@ pub fn build_detail_page(
             util::load_image_async(&poster, &url, state.image_cache.clone(), plex.http.clone());
         }
     }
-    content.append(&poster);
+    overlay_box.append(&poster);
 
-    let info = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let info = gtk::Box::new(gtk::Orientation::Vertical, 4);
     info.set_hexpand(true);
-    info.set_valign(gtk::Align::Start);
+    info.set_valign(gtk::Align::End);
 
     let title_label = gtk::Label::builder()
         .label(&item.display_title())
@@ -56,27 +88,39 @@ pub fn build_detail_page(
         .build();
     info.append(&title_label);
 
-    let mut meta_parts = Vec::new();
+    let meta_box = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    meta_box.set_margin_top(6);
+
     if let Some(y) = item.year {
-        meta_parts.push(y.to_string());
-    }
-    if let Some(cr) = &item.content_rating {
-        meta_parts.push(cr.clone());
-    }
-    if let Some(d) = item.duration {
-        meta_parts.push(util::format_duration(d));
-    }
-    if let Some(r) = item.audience_rating.or(item.rating) {
-        meta_parts.push(format!("\u{2605} {:.1}", r));
-    }
-    if !meta_parts.is_empty() {
-        let meta_label = gtk::Label::builder()
-            .label(&meta_parts.join("  \u{00b7}  "))
-            .halign(gtk::Align::Start)
+        let yl = gtk::Label::builder()
+            .label(&y.to_string())
             .css_classes(["detail-meta"])
             .build();
-        info.append(&meta_label);
+        meta_box.append(&yl);
     }
+    if let Some(cr) = &item.content_rating {
+        let tag = gtk::Label::builder()
+            .label(cr)
+            .css_classes(["detail-meta-tag"])
+            .build();
+        meta_box.append(&tag);
+    }
+    if let Some(d) = item.duration {
+        let dl = gtk::Label::builder()
+            .label(&util::format_duration(d))
+            .css_classes(["detail-meta"])
+            .build();
+        meta_box.append(&dl);
+    }
+    if let Some(r) = item.audience_rating.or(item.rating) {
+        let rl = gtk::Label::builder()
+            .label(&format!("\u{2605} {:.1}", r))
+            .css_classes(["detail-meta"])
+            .build();
+        meta_box.append(&rl);
+    }
+
+    info.append(&meta_box);
 
     if item.item_type.as_deref() == Some("episode") {
         let mut ep_info = String::new();
@@ -99,12 +143,16 @@ pub fn build_detail_page(
     }
 
     let play_btn = gtk::Button::builder()
-        .label("\u{25b6}  Play")
-        .css_classes(["suggested-action", "pill"])
         .halign(gtk::Align::Start)
-        .margin_top(16)
-        .margin_bottom(16)
+        .margin_top(14)
+        .css_classes(["plex-play-btn"])
         .build();
+    let play_content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let play_icon = gtk::Image::from_icon_name("media-playback-start-symbolic");
+    play_icon.set_pixel_size(16);
+    play_content.append(&play_icon);
+    play_content.append(&gtk::Label::new(Some("Play")));
+    play_btn.set_child(Some(&play_content));
 
     {
         let state = state.clone();
@@ -131,6 +179,16 @@ pub fn build_detail_page(
     }
     info.append(&play_btn);
 
+    overlay_box.append(&info);
+    hero.add_overlay(&overlay_box);
+    outer.append(&hero);
+
+    let details_box = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    details_box.set_margin_start(40);
+    details_box.set_margin_end(40);
+    details_box.set_margin_top(24);
+    details_box.set_margin_bottom(40);
+
     if let Some(summary) = &item.summary {
         if !summary.is_empty() {
             let summary_label = gtk::Label::builder()
@@ -139,7 +197,7 @@ pub fn build_detail_page(
                 .wrap(true)
                 .css_classes(["detail-summary"])
                 .build();
-            info.append(&summary_label);
+            details_box.append(&summary_label);
         }
     }
 
@@ -148,14 +206,14 @@ pub fn build_detail_page(
         let mi_label = gtk::Label::builder()
             .label(&media_info)
             .halign(gtk::Align::Start)
-            .margin_top(16)
+            .margin_top(6)
             .css_classes(["detail-media-info"])
             .build();
-        info.append(&mi_label);
+        details_box.append(&mi_label);
     }
 
-    content.append(&info);
-    scroll.set_child(Some(&content));
+    outer.append(&details_box);
+    scroll.set_child(Some(&outer));
     toolbar.set_content(Some(&scroll));
 
     adw::NavigationPage::builder()

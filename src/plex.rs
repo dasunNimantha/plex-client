@@ -88,18 +88,6 @@ impl PlexClient {
         Ok(resp.media_container.metadata.unwrap_or_default())
     }
 
-    pub async fn get_on_deck(&self) -> Result<Vec<MediaItem>> {
-        let text = self.get_json("/library/onDeck").await?;
-        let resp: PlexResponse<MetadataContainer> = serde_json::from_str(&text)?;
-        Ok(resp.media_container.metadata.unwrap_or_default())
-    }
-
-    pub async fn get_recently_added(&self) -> Result<Vec<MediaItem>> {
-        let text = self.get_json("/library/recentlyAdded").await?;
-        let resp: PlexResponse<MetadataContainer> = serde_json::from_str(&text)?;
-        Ok(resp.media_container.metadata.unwrap_or_default())
-    }
-
     pub async fn search(&self, query: &str) -> Result<Vec<MediaItem>> {
         let encoded = urlencoding::encode(query);
         let text = self
@@ -151,6 +139,19 @@ impl PlexClient {
         )
     }
 
+    pub fn art_url(&self, art: &str, width: u32, height: u32) -> String {
+        let encoded = urlencoding::encode(art);
+        format!(
+            "{}/photo/:/transcode?url={}&width={}&height={}&minSize=1&X-Plex-Token={}",
+            self.server_url, encoded, width, height, self.token
+        )
+    }
+
+    pub async fn get_hubs(&self) -> Result<Vec<Hub>> {
+        let text = self.get_json("/hubs?count=12").await?;
+        let resp: PlexResponse<HubContainer> = serde_json::from_str(&text)?;
+        Ok(resp.media_container.hub.unwrap_or_default())
+    }
 }
 
 // --- Plex API response models ---
@@ -169,6 +170,24 @@ pub struct LibraryContainer {
 
 #[derive(Deserialize)]
 pub struct MetadataContainer {
+    #[serde(rename = "Metadata")]
+    pub metadata: Option<Vec<MediaItem>>,
+}
+
+#[derive(Deserialize)]
+pub struct HubContainer {
+    #[serde(rename = "Hub")]
+    pub hub: Option<Vec<Hub>>,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+#[allow(dead_code)]
+pub struct Hub {
+    pub title: Option<String>,
+    #[serde(rename = "type")]
+    pub hub_type: Option<String>,
+    #[serde(rename = "hubIdentifier")]
+    pub hub_identifier: Option<String>,
     #[serde(rename = "Metadata")]
     pub metadata: Option<Vec<MediaItem>>,
 }

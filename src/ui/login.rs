@@ -24,33 +24,36 @@ pub fn build_login_page(
     outer.set_valign(gtk::Align::Center);
     outer.set_halign(gtk::Align::Center);
     outer.set_vexpand(true);
+    outer.add_css_class("login-page");
 
-    let clamp = adw::Clamp::builder().maximum_size(420).build();
+    let clamp = adw::Clamp::builder().maximum_size(400).build();
 
     let vbox = gtk::Box::new(gtk::Orientation::Vertical, 16);
-    vbox.set_margin_start(24);
-    vbox.set_margin_end(24);
+    vbox.set_margin_start(32);
+    vbox.set_margin_end(32);
     vbox.set_margin_top(48);
     vbox.set_margin_bottom(48);
+    vbox.set_halign(gtk::Align::Center);
 
-    let icon = gtk::Image::from_icon_name("video-display-symbolic");
-    icon.set_pixel_size(64);
-    icon.set_margin_bottom(8);
-    vbox.append(&icon);
+    let logo_label = gtk::Label::new(None);
+    logo_label.set_markup("<span font_weight='800' font_size='xx-large' foreground='#E5A00D'>PLEX</span>");
+    logo_label.set_margin_bottom(4);
+    vbox.append(&logo_label);
 
-    let title = gtk::Label::new(Some("Plex Client"));
+    let title = gtk::Label::new(Some("Welcome"));
     title.add_css_class("login-title");
     vbox.append(&title);
 
-    let subtitle = gtk::Label::new(Some("Connect to your Plex Media Server"));
+    let subtitle = gtk::Label::new(Some("Sign in to your Plex account to get started"));
     subtitle.add_css_class("login-subtitle");
-    subtitle.set_margin_bottom(16);
+    subtitle.set_margin_bottom(20);
+    subtitle.set_wrap(true);
+    subtitle.set_justify(gtk::Justification::Center);
     vbox.append(&subtitle);
 
-    // --- Sign in with Plex button (browser OAuth) ---
     let plex_btn = gtk::Button::builder()
         .label("Sign in with Plex")
-        .css_classes(["suggested-action", "pill"])
+        .css_classes(["plex-sign-in-btn"])
         .halign(gtk::Align::Center)
         .build();
 
