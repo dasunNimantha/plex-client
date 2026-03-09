@@ -201,9 +201,7 @@ pub fn build_login_page(
                         let _ = cfg.save();
                         *state.config.borrow_mut() = cfg;
 
-                        if let Some(main_view) = main_stack.child_by_name("main") {
-                            find_and_populate_sidebar(&main_view, &libs);
-                        }
+                        sidebar::populate_sidebar(&state.sidebar_list, &libs);
 
                         *state.client.borrow_mut() = Some(plex);
                         main_stack.set_visible_child_name("main");
@@ -700,9 +698,7 @@ fn finish_connection(
     let _ = cfg.save();
     *state.config.borrow_mut() = cfg;
 
-    if let Some(main_view) = main_stack.child_by_name("main") {
-        find_and_populate_sidebar(&main_view, &libs);
-    }
+    sidebar::populate_sidebar(&state.sidebar_list, &libs);
 
     *state.client.borrow_mut() = Some(plex);
     main_stack.set_visible_child_name("main");
@@ -728,17 +724,3 @@ fn open_browser(url: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn find_and_populate_sidebar(widget: &impl gtk::prelude::IsA<gtk::Widget>, libs: &[crate::plex::Library]) {
-    let widget = widget.as_ref();
-    if let Ok(listbox) = widget.clone().downcast::<gtk::ListBox>() {
-        if listbox.has_css_class("navigation-sidebar") {
-            sidebar::populate_sidebar(&listbox, libs);
-            return;
-        }
-    }
-    let mut child = widget.first_child();
-    while let Some(c) = child {
-        find_and_populate_sidebar(&c, libs);
-        child = c.next_sibling();
-    }
-}

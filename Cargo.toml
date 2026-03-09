@@ -15,6 +15,6 @@ dirs = "6"
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
 urlencoding = "2"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "time", "process", "fs"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs"] }
 libmpv2 = { version = "5", features = ["render"] }
 libc = "0.2"

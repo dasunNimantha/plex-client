@@ -40,8 +40,8 @@ pub fn build_sidebar() -> (gtk::Box, gtk::ListBox, gtk::Button) {
 }
 
 pub fn populate_sidebar(listbox: &gtk::ListBox, libs: &[Library]) {
-    while let Some(row) = listbox.row_at_index(0) {
-        listbox.remove(&row);
+    while let Some(child) = listbox.first_child() {
+        listbox.remove(&child);
     }
 
     let home_label = gtk::Label::builder()

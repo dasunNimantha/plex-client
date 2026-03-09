@@ -1,5 +1,6 @@
 use anyhow::Result;
 use serde::Deserialize;
+use std::sync::Arc;
 
 const PLEX_PRODUCT: &str = "Plex Client for Linux";
 const PLEX_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -8,14 +9,14 @@ const PLEX_PLATFORM: &str = "Linux";
 #[derive(Clone)]
 pub struct PlexClient {
     pub http: reqwest::Client,
-    pub server_url: String,
-    pub token: String,
-    pub client_id: String,
+    server_url: Arc<str>,
+    token: Arc<str>,
+    client_id: Arc<str>,
 }
 
 impl PlexClient {
     pub async fn connect(server_url: &str, token: &str, client_id: &str) -> Result<Self> {
-        let server_url = server_url.trim_end_matches('/').to_string();
+        let server_url: Arc<str> = server_url.trim_end_matches('/').into();
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .connect_timeout(std::time::Duration::from_secs(10))
@@ -24,7 +25,7 @@ impl PlexClient {
             .build()?;
 
         let resp = http
-            .get(&server_url)
+            .get(&*server_url)
             .headers(Self::plex_headers(token, client_id))
             .header("Accept", "application/json")
             .send()
@@ -37,8 +38,8 @@ impl PlexClient {
         Ok(Self {
             http,
             server_url,
-            token: token.to_string(),
-            client_id: client_id.to_string(),
+            token: token.into(),
+            client_id: client_id.into(),
         })
     }
 
@@ -150,9 +151,6 @@ impl PlexClient {
         )
     }
 
-    pub async fn download_image(&self, url: &str) -> Result<Vec<u8>> {
-        Ok(self.http.get(url).send().await?.bytes().await?.to_vec())
-    }
 }
 
 // --- Plex API response models ---
@@ -184,6 +182,7 @@ pub struct Library {
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[allow(dead_code)]
 pub struct MediaItem {
     #[serde(rename = "ratingKey")]
     pub rating_key: Option<String>,
@@ -218,6 +217,7 @@ pub struct MediaItem {
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[allow(dead_code)]
 pub struct Media {
     pub duration: Option<i64>,
     pub bitrate: Option<i64>,
@@ -235,6 +235,7 @@ pub struct Media {
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[allow(dead_code)]
 pub struct Part {
     pub key: Option<String>,
     pub file: Option<String>,

@@ -41,14 +41,11 @@ fn url_to_cache_key(url: &str) -> String {
     format!("{:016x}", h.finish())
 }
 
-/// Decoded pixel data that can be sent across threads
 struct DecodedImage {
     rgba: Vec<u8>,
     width: i32,
     height: i32,
 }
-
-unsafe impl Send for DecodedImage {}
 
 fn decode_image_offthread(bytes: &[u8]) -> Option<DecodedImage> {
     let loader = gdk_pixbuf::PixbufLoader::new();
@@ -89,7 +86,7 @@ pub fn load_image_async(
     http: reqwest::Client,
 ) {
     {
-        let c = cache.borrow();
+        let mut c = cache.borrow_mut();
         if let Some(texture) = c.get(url) {
             picture.set_paintable(Some(texture));
             return;
@@ -108,19 +105,20 @@ pub fn load_image_async(
         let cache_key = url_to_cache_key(&url_fetch);
         let cache_path = cache_dir.join(&cache_key);
 
-        // Try disk cache first
         let bytes = if let Ok(b) = tokio::fs::read(&cache_path).await {
             Some(b)
         } else {
-            // Fetch using the shared HTTP client (connection pooling)
             let fetched = match http.get(&url_fetch).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    resp.bytes().await.ok().map(|b| b.to_vec())
+                }
                 Ok(resp) => {
-                    if !resp.status().is_success() {
-                        eprintln!("plex-client: image HTTP {}: {}", resp.status(), &url_fetch[..url_fetch.find('?').unwrap_or(url_fetch.len())]);
-                        None
-                    } else {
-                        resp.bytes().await.ok().map(|b| b.to_vec())
-                    }
+                    eprintln!(
+                        "plex-client: image HTTP {}: {}",
+                        resp.status(),
+                        &url_fetch[..url_fetch.find('?').unwrap_or(url_fetch.len())]
+                    );
+                    None
                 }
                 Err(e) => {
                     eprintln!("plex-client: image fetch error: {}", e);
@@ -128,7 +126,6 @@ pub fn load_image_async(
                 }
             };
 
-            // Write to disk cache in background
             if let Some(ref bytes) = fetched {
                 let _ = tokio::fs::create_dir_all(&cache_dir).await;
                 let _ = tokio::fs::write(&cache_path, bytes).await;
@@ -137,7 +134,6 @@ pub fn load_image_async(
             fetched
         };
 
-        // Decode on this tokio thread (NOT the main thread)
         let decoded = bytes.and_then(|b| decode_image_offthread(&b));
         let _ = tx.send(decoded);
     });

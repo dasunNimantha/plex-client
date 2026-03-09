@@ -1,8 +1,19 @@
 use anyhow::Result;
 use serde::Deserialize;
+use std::sync::OnceLock;
 
 const PLEX_PRODUCT: &str = "Plex Client for Linux";
 const PLEX_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+fn shared_http() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("failed to build HTTP client")
+    })
+}
 
 #[derive(Deserialize, Debug)]
 pub struct PinResponse {
@@ -24,6 +35,7 @@ pub struct PlexResource {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+#[allow(dead_code)]
 pub struct PlexConnection {
     pub uri: String,
     pub local: Option<bool>,
@@ -67,8 +79,7 @@ impl PlexResource {
 }
 
 pub async fn request_pin(client_id: &str) -> Result<PinResponse> {
-    let http = reqwest::Client::new();
-    let resp = http
+    let resp = shared_http()
         .post("https://plex.tv/api/v2/pins")
         .header("Accept", "application/json")
         .form(&[
@@ -97,9 +108,8 @@ pub fn auth_url(client_id: &str, code: &str) -> String {
 }
 
 pub async fn check_pin(client_id: &str, pin_id: i64, code: &str) -> Result<Option<String>> {
-    let http = reqwest::Client::new();
     let url = format!("https://plex.tv/api/v2/pins/{}", pin_id);
-    let resp = http
+    let resp = shared_http()
         .get(&url)
         .header("Accept", "application/json")
         .query(&[
@@ -118,8 +128,7 @@ pub async fn check_pin(client_id: &str, pin_id: i64, code: &str) -> Result<Optio
 }
 
 pub async fn get_servers(token: &str, client_id: &str) -> Result<Vec<PlexResource>> {
-    let http = reqwest::Client::new();
-    let resp = http
+    let resp = shared_http()
         .get("https://plex.tv/api/v2/resources")
         .header("Accept", "application/json")
         .header("X-Plex-Token", token)

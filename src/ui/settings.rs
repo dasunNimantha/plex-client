@@ -35,7 +35,6 @@ pub fn build_settings_page(state: &AppState) -> adw::NavigationPage {
     let available = config::detect_available_hwdec();
     let current_hwdec = state.config.borrow().hwdec.clone();
 
-    let check_group: Vec<gtk::CheckButton> = Vec::new();
     let mut first_check: Option<gtk::CheckButton> = None;
 
     for entry in &available {
@@ -72,8 +71,6 @@ pub fn build_settings_page(state: &AppState) -> adw::NavigationPage {
         row.add_prefix(&check);
         hwdec_group.add(&row);
     }
-
-    let _ = check_group;
 
     vbox.append(&hwdec_group);
 

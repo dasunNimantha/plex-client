@@ -41,7 +41,8 @@ pub fn build_ui(app: &adw::Application, rt: tokio::runtime::Handle) {
         }
     });
 
-    let state = AppState::new(rt, player_widget, main_stack.clone(), config.clone());
+    let (sidebar_box, sidebar_list, settings_btn) = sidebar::build_sidebar();
+    let state = AppState::new(rt, player_widget, main_stack.clone(), config.clone(), sidebar_list.clone());
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
@@ -59,7 +60,6 @@ pub fn build_ui(app: &adw::Application, rt: tokio::runtime::Handle) {
     // Main view (sidebar + content)
     let main_box = gtk::Box::new(gtk::Orientation::Horizontal, 0);
 
-    let (sidebar_box, sidebar_list, settings_btn) = sidebar::build_sidebar();
     main_box.append(&sidebar_box);
     main_box.append(&gtk::Separator::new(gtk::Orientation::Vertical));
 

@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use super::state::AppState;
 
-/// Polls the embedded player's state every 5 seconds and reports progress to Plex.
-/// Stops automatically when the player stops or goes idle.
+/// Cancels any prior tracking timer and starts a new one.
+/// Polls the player every 5s and reports progress to Plex.
 pub fn start_progress_tracking(
     state: &AppState,
     rating_key: Option<String>,
@@ -13,11 +13,18 @@ pub fn start_progress_tracking(
     let Some(rk) = rating_key else { return };
     let dur = duration_ms.unwrap_or(0);
 
+    if let Some(old_id) = state.progress_timer.borrow_mut().take() {
+        old_id.remove();
+    }
+
+    let timer_holder = state.progress_timer.clone();
+    let timer_holder_cb = timer_holder.clone();
     let state = state.clone();
 
-    glib::timeout_add_local(Duration::from_secs(5), move || {
+    let id = glib::timeout_add_local(Duration::from_secs(5), move || {
         if !state.player_widget.is_playing() {
             report_to_plex(&state, &rk, 0, dur, "stopped");
+            *timer_holder_cb.borrow_mut() = None;
             return glib::ControlFlow::Break;
         }
 
@@ -31,6 +38,7 @@ pub fn start_progress_tracking(
 
         glib::ControlFlow::Continue
     });
+    *timer_holder.borrow_mut() = Some(id);
 }
 
 fn report_to_plex(

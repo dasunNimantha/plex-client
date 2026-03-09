@@ -36,18 +36,6 @@ impl HwdecMode {
         }
     }
 
-    pub fn label(&self) -> &str {
-        match self {
-            Self::Vaapi => "VA-API zero-copy (Intel / AMD)",
-            Self::VaapiCopy => "VA-API copy (Intel / AMD)",
-            Self::Nvdec => "NVDEC zero-copy (NVIDIA)",
-            Self::NvdecCopy => "NVDEC copy (NVIDIA)",
-            Self::VdpauCopy => "VDPAU (NVIDIA legacy)",
-            Self::Auto => "Auto",
-            Self::AutoCopy => "Auto (copy)",
-            Self::None => "Software (CPU)",
-        }
-    }
 }
 
 #[derive(Clone)]
