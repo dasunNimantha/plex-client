@@ -69,9 +69,10 @@ const CSS: &str = r#"
     font-weight: bold;
 }
 .playback-bar {
-    background-color: alpha(@window_bg_color, 0.95);
+    background-color: alpha(black, 0.75);
     padding: 8px 16px;
-    border-top: 1px solid alpha(currentColor, 0.1);
+    border-radius: 8px;
+    color: white;
 }
 .playback-title {
     font-size: 13px;
@@ -79,7 +80,7 @@ const CSS: &str = r#"
 }
 .playback-time {
     font-size: 11px;
-    opacity: 0.6;
+    opacity: 0.8;
     font-family: monospace;
 }
 "#;

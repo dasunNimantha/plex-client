@@ -125,6 +125,10 @@ pub fn best_default_hwdec() -> HwdecMode {
     HwdecMode::AutoCopy
 }
 
+fn default_seek_seconds() -> u32 {
+    10
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
     pub server_url: Option<String>,
@@ -132,6 +136,8 @@ pub struct Config {
     pub client_id: String,
     #[serde(default = "best_default_hwdec")]
     pub hwdec: HwdecMode,
+    #[serde(default = "default_seek_seconds")]
+    pub seek_seconds: u32,
 }
 
 impl Default for Config {
@@ -141,6 +147,7 @@ impl Default for Config {
             token: None,
             client_id: uuid::Uuid::new_v4().to_string(),
             hwdec: best_default_hwdec(),
+            seek_seconds: 10,
         }
     }
 }

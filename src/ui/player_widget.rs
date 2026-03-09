@@ -98,7 +98,7 @@ fn create_mpv(hwdec: &str) -> Option<Mpv> {
 }
 
 pub struct PlayerWidget {
-    pub widget: gtk::Box,
+    pub widget: gtk::Overlay,
     video_box: gtk::Box,
     header: adw::HeaderBar,
     controls: gtk::Box,
@@ -119,19 +119,31 @@ pub struct PlayerWidget {
     hwdec: String,
     fullscreen_btn: gtk::Button,
     controls_timeout: Rc<RefCell<Option<glib::SourceId>>>,
+    seek_seconds: Rc<Cell<f64>>,
+    motion_suppress_until: Rc<Cell<u128>>,
+    last_mouse_pos: Rc<Cell<(i32, i32)>>,
 }
 
 impl PlayerWidget {
-    pub fn new(hwdec: &str) -> Rc<Self> {
-        // Outer vertical box: header -> video area -> controls
-        let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        outer.set_vexpand(true);
-        outer.set_hexpand(true);
+    pub fn new(hwdec: &str, seek_seconds: u32) -> Rc<Self> {
+        // Overlay: video takes full space, header+controls float on top
+        let overlay = gtk::Overlay::new();
+        overlay.set_vexpand(true);
+        overlay.set_hexpand(true);
 
-        // Header bar with window controls
+        // Video area (GL area gets prepended here lazily) -- the main child
+        let video_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        video_box.set_vexpand(true);
+        video_box.set_hexpand(true);
+        video_box.set_focusable(true);
+        overlay.set_child(Some(&video_box));
+
+        // Header bar floating at the top
         let header = adw::HeaderBar::new();
         let header_title = adw::WindowTitle::new("Plex", "");
         header.set_title_widget(Some(&header_title));
+        header.set_valign(gtk::Align::Start);
+        header.add_css_class("osd");
 
         let back_btn = gtk::Button::from_icon_name("go-previous-symbolic");
         back_btn.add_css_class("flat");
@@ -143,20 +155,15 @@ impl PlayerWidget {
         fullscreen_btn.set_tooltip_text(Some("Toggle fullscreen"));
         header.pack_end(&fullscreen_btn);
 
-        outer.append(&header);
+        overlay.add_overlay(&header);
 
-        // Video area (GL area gets prepended here lazily)
-        let video_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        video_box.set_vexpand(true);
-        video_box.set_hexpand(true);
-        outer.append(&video_box);
-
-        // Controls bar
+        // Controls bar floating at the bottom
         let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         controls.set_margin_start(12);
         controls.set_margin_end(12);
         controls.set_margin_top(8);
         controls.set_margin_bottom(8);
+        controls.set_valign(gtk::Align::End);
         controls.add_css_class("playback-bar");
 
         let play_pause_btn = gtk::Button::from_icon_name("media-playback-pause-symbolic");
@@ -185,10 +192,10 @@ impl PlayerWidget {
         title_label.set_margin_end(8);
         controls.append(&title_label);
 
-        outer.append(&controls);
+        overlay.add_overlay(&controls);
 
         let pw = Rc::new(Self {
-            widget: outer,
+            widget: overlay,
             video_box,
             header,
             controls,
@@ -209,10 +216,13 @@ impl PlayerWidget {
             hwdec: hwdec.to_string(),
             fullscreen_btn,
             controls_timeout: Rc::new(RefCell::new(None)),
+            seek_seconds: Rc::new(Cell::new(seek_seconds as f64)),
+            motion_suppress_until: Rc::new(Cell::new(0)),
+            last_mouse_pos: Rc::new(Cell::new((-1, -1))),
         });
 
         pw.setup_control_callbacks(&stop_btn, &back_btn);
-        pw.setup_fullscreen_gestures();
+        pw.setup_gestures_and_keys();
 
         pw
     }
@@ -345,17 +355,9 @@ impl PlayerWidget {
 
         self.play_pause_btn.connect_clicked({
             let pw = pw.clone();
-            move |btn| {
-                let Some(pw) = pw.upgrade() else { return };
-                let mpv_borrow = pw.mpv.borrow();
-                if let Some(ref mpv) = *mpv_borrow {
-                    let paused: bool = mpv.get_property("pause").unwrap_or(false);
-                    let _ = mpv.set_property("pause", !paused);
-                    btn.set_icon_name(if !paused {
-                        "media-playback-start-symbolic"
-                    } else {
-                        "media-playback-pause-symbolic"
-                    });
+            move |_| {
+                if let Some(pw) = pw.upgrade() {
+                    pw.toggle_pause();
                 }
             }
         });
@@ -468,6 +470,7 @@ impl PlayerWidget {
     }
 
     fn enter_fullscreen(&self, window: &gtk::Window) {
+        self.suppress_motion(500);
         window.fullscreen();
         self.header.set_visible(false);
         self.controls.set_visible(false);
@@ -477,6 +480,7 @@ impl PlayerWidget {
     }
 
     fn exit_fullscreen(&self, window: &gtk::Window) {
+        self.suppress_motion(500);
         window.unfullscreen();
         self.header.set_visible(true);
         self.controls.set_visible(true);
@@ -489,12 +493,12 @@ impl PlayerWidget {
     }
 
     fn show_controls_briefly(self: &Rc<Self>) {
-        let Some(window) = self.widget.root().and_then(|r| r.downcast::<gtk::Window>().ok()) else {
-            return;
-        };
-        if !window.is_fullscreen() {
-            return;
+        let was_hidden = !self.header.is_visible();
+
+        if was_hidden {
+            self.suppress_motion(500);
         }
+
         self.header.set_visible(true);
         self.controls.set_visible(true);
         self.video_box.set_cursor(None::<&gtk::gdk::Cursor>);
@@ -504,10 +508,11 @@ impl PlayerWidget {
         }
 
         let pw = Rc::downgrade(self);
-        let id = glib::timeout_add_local_once(Duration::from_secs(3), move || {
+        let id = glib::timeout_add_local_once(Duration::from_secs(2), move || {
             let Some(pw) = pw.upgrade() else { return };
             if let Some(win) = pw.widget.root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
                 if win.is_fullscreen() {
+                    pw.suppress_motion(500);
                     pw.header.set_visible(false);
                     pw.controls.set_visible(false);
                     pw.video_box.set_cursor_from_name(Some("none"));
@@ -518,26 +523,92 @@ impl PlayerWidget {
         *self.controls_timeout.borrow_mut() = Some(id);
     }
 
-    fn setup_fullscreen_gestures(self: &Rc<Self>) {
-        // Double-click on inner_box to toggle fullscreen
-        let dbl_click = gtk::GestureClick::new();
-        dbl_click.set_button(1);
+    fn suppress_motion(&self, ms: u128) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        self.motion_suppress_until.set(now + ms);
+    }
+
+    fn is_motion_suppressed(&self) -> bool {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        now < self.motion_suppress_until.get()
+    }
+
+    fn toggle_pause(&self) {
+        let mpv_borrow = self.mpv.borrow();
+        if let Some(ref mpv) = *mpv_borrow {
+            let paused: bool = mpv.get_property("pause").unwrap_or(false);
+            let _ = mpv.set_property("pause", !paused);
+            self.play_pause_btn.set_icon_name(if !paused {
+                "media-playback-start-symbolic"
+            } else {
+                "media-playback-pause-symbolic"
+            });
+        }
+    }
+
+    fn seek_relative(&self, seconds: f64) {
+        let mpv_borrow = self.mpv.borrow();
+        if let Some(ref mpv) = *mpv_borrow {
+            let pos: f64 = mpv.get_property("time-pos").unwrap_or(0.0);
+            let dur: f64 = mpv.get_property("duration").unwrap_or(0.0);
+            let new_pos = (pos + seconds).clamp(0.0, dur);
+            let _ = mpv.set_property("time-pos", new_pos);
+        }
+    }
+
+    pub fn set_seek_seconds(&self, s: u32) {
+        self.seek_seconds.set(s as f64);
+    }
+
+    fn setup_gestures_and_keys(self: &Rc<Self>) {
+        // Single click toggles play/pause, double-click toggles fullscreen.
+        // On double-click GTK fires released(n=1) then released(n=2),
+        // so we undo the pause toggle that the first click caused.
+        let click = gtk::GestureClick::new();
+        click.set_button(1);
         let pw = Rc::downgrade(self);
-        dbl_click.connect_released(move |gesture, n_press, _, _| {
-            if n_press == 2 {
-                gesture.set_state(gtk::EventSequenceState::Claimed);
-                if let Some(pw) = pw.upgrade() {
-                    pw.toggle_fullscreen();
+        click.connect_released(move |gesture, n_press, _, _| {
+            let Some(pw) = pw.upgrade() else { return };
+            if !pw.is_playing.get() {
+                return;
+            }
+            match n_press {
+                1 => {
+                    pw.toggle_pause();
+                    pw.video_box.grab_focus();
                 }
+                2 => {
+                    gesture.set_state(gtk::EventSequenceState::Claimed);
+                    pw.toggle_pause();
+                    pw.toggle_fullscreen();
+                    pw.video_box.grab_focus();
+                }
+                _ => {}
             }
         });
-        self.video_box.add_controller(dbl_click);
+        self.video_box.add_controller(click);
 
         // Mouse motion shows controls briefly in fullscreen
         let motion = gtk::EventControllerMotion::new();
         let pw = Rc::downgrade(self);
-        motion.connect_motion(move |_, _, _| {
+        motion.connect_motion(move |_, x, y| {
             if let Some(pw) = pw.upgrade() {
+                let pos = (x as i32, y as i32);
+                let last = pw.last_mouse_pos.get();
+                if pos == last {
+                    return;
+                }
+                pw.last_mouse_pos.set(pos);
+
+                if pw.is_motion_suppressed() {
+                    return;
+                }
                 if let Some(win) = pw.widget.root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
                     if win.is_fullscreen() {
                         pw.show_controls_briefly();
@@ -547,12 +618,20 @@ impl PlayerWidget {
         });
         self.video_box.add_controller(motion);
 
-        // Escape key exits fullscreen
+        // Keyboard shortcuts -- use CAPTURE phase on the outer widget so keys
+        // are intercepted before child widgets (seek bar, buttons) can consume them.
         let key_ctrl = gtk::EventControllerKey::new();
+        key_ctrl.set_propagation_phase(gtk::PropagationPhase::Capture);
         let pw = Rc::downgrade(self);
         key_ctrl.connect_key_pressed(move |_, key, _, _| {
-            if key == gtk::gdk::Key::Escape {
-                if let Some(pw) = pw.upgrade() {
+            let Some(pw) = pw.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            if !pw.is_playing.get() {
+                return glib::Propagation::Proceed;
+            }
+            match key {
+                k if k == gtk::gdk::Key::Escape => {
                     if let Some(win) = pw.widget.root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
                         if win.is_fullscreen() {
                             pw.exit_fullscreen(&win);
@@ -560,6 +639,47 @@ impl PlayerWidget {
                         }
                     }
                 }
+                k if k == gtk::gdk::Key::f || k == gtk::gdk::Key::F => {
+                    pw.toggle_fullscreen();
+                    return glib::Propagation::Stop;
+                }
+                k if k == gtk::gdk::Key::space => {
+                    pw.toggle_pause();
+                    return glib::Propagation::Stop;
+                }
+                k if k == gtk::gdk::Key::Left => {
+                    pw.seek_relative(-pw.seek_seconds.get());
+                    return glib::Propagation::Stop;
+                }
+                k if k == gtk::gdk::Key::Right => {
+                    pw.seek_relative(pw.seek_seconds.get());
+                    return glib::Propagation::Stop;
+                }
+                k if k == gtk::gdk::Key::Up => {
+                    let mpv_borrow = pw.mpv.borrow();
+                    if let Some(ref mpv) = *mpv_borrow {
+                        let vol: f64 = mpv.get_property("volume").unwrap_or(100.0);
+                        let _ = mpv.set_property("volume", (vol + 5.0).min(150.0));
+                    }
+                    return glib::Propagation::Stop;
+                }
+                k if k == gtk::gdk::Key::Down => {
+                    let mpv_borrow = pw.mpv.borrow();
+                    if let Some(ref mpv) = *mpv_borrow {
+                        let vol: f64 = mpv.get_property("volume").unwrap_or(100.0);
+                        let _ = mpv.set_property("volume", (vol - 5.0).max(0.0));
+                    }
+                    return glib::Propagation::Stop;
+                }
+                k if k == gtk::gdk::Key::m || k == gtk::gdk::Key::M => {
+                    let mpv_borrow = pw.mpv.borrow();
+                    if let Some(ref mpv) = *mpv_borrow {
+                        let muted: bool = mpv.get_property("mute").unwrap_or(false);
+                        let _ = mpv.set_property("mute", !muted);
+                    }
+                    return glib::Propagation::Stop;
+                }
+                _ => {}
             }
             glib::Propagation::Proceed
         });
@@ -583,6 +703,8 @@ impl PlayerWidget {
         } else {
             *self.pending_url.borrow_mut() = Some(url.to_string());
         }
+
+        self.video_box.grab_focus();
     }
 
     pub fn stop(&self) {

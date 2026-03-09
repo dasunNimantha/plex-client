@@ -77,6 +77,37 @@ pub fn build_settings_page(state: &AppState) -> adw::NavigationPage {
 
     vbox.append(&hwdec_group);
 
+    // --- Playback ---
+    let playback_group = adw::PreferencesGroup::builder()
+        .title("Playback")
+        .build();
+
+    let seek_row = adw::ActionRow::builder()
+        .title("Seek step (seconds)")
+        .subtitle("Time to skip with left/right arrow keys")
+        .build();
+
+    let current_seek = state.config.borrow().seek_seconds;
+    let seek_spin = gtk::SpinButton::with_range(1.0, 60.0, 1.0);
+    seek_spin.set_value(current_seek as f64);
+    seek_spin.set_valign(gtk::Align::Center);
+
+    {
+        let state_c = state.clone();
+        seek_spin.connect_value_changed(move |btn| {
+            let val = btn.value() as u32;
+            let mut cfg = state_c.config.borrow_mut();
+            cfg.seek_seconds = val;
+            let _ = cfg.save();
+            drop(cfg);
+            state_c.player_widget.set_seek_seconds(val);
+        });
+    }
+
+    seek_row.add_suffix(&seek_spin);
+    playback_group.add(&seek_row);
+    vbox.append(&playback_group);
+
     // --- About ---
     let about_group = adw::PreferencesGroup::builder()
         .title("About")

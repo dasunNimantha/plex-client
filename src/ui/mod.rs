@@ -31,7 +31,7 @@ pub fn build_ui(app: &adw::Application, rt: tokio::runtime::Handle) {
     main_stack.set_transition_type(gtk::StackTransitionType::None);
 
     let hwdec_value = config.hwdec.as_mpv_value().to_string();
-    let player_widget = player_widget::PlayerWidget::new(&hwdec_value);
+    let player_widget = player_widget::PlayerWidget::new(&hwdec_value, config.seek_seconds);
     main_stack.add_named(&player_widget.widget, Some("player"));
 
     player_widget.set_on_stop({
