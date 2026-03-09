@@ -1,25 +1,34 @@
 use anyhow::Result;
 use serde::Deserialize;
 
+const PLEX_PRODUCT: &str = "Plex Client for Linux";
+const PLEX_VERSION: &str = env!("CARGO_PKG_VERSION");
+const PLEX_PLATFORM: &str = "Linux";
+
 #[derive(Clone)]
 pub struct PlexClient {
-    http: reqwest::blocking::Client,
+    pub http: reqwest::Client,
     pub server_url: String,
     pub token: String,
+    pub client_id: String,
 }
 
 impl PlexClient {
-    pub fn connect(server_url: &str, token: &str) -> Result<Self> {
+    pub async fn connect(server_url: &str, token: &str, client_id: &str) -> Result<Self> {
         let server_url = server_url.trim_end_matches('/').to_string();
-        let http = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .danger_accept_invalid_certs(true)
+            .pool_max_idle_per_host(8)
             .build()?;
 
         let resp = http
             .get(&server_url)
-            .header("X-Plex-Token", token)
+            .headers(Self::plex_headers(token, client_id))
             .header("Accept", "application/json")
-            .send()?;
+            .send()
+            .await?;
 
         if !resp.status().is_success() {
             anyhow::bail!("Connection failed: HTTP {}", resp.status());
@@ -29,55 +38,94 @@ impl PlexClient {
             http,
             server_url,
             token: token.to_string(),
+            client_id: client_id.to_string(),
         })
     }
 
-    fn get_json(&self, path: &str) -> Result<String> {
+    fn plex_headers(token: &str, client_id: &str) -> reqwest::header::HeaderMap {
+        let mut h = reqwest::header::HeaderMap::new();
+        h.insert("X-Plex-Token", token.parse().unwrap());
+        h.insert("X-Plex-Client-Identifier", client_id.parse().unwrap());
+        h.insert("X-Plex-Product", PLEX_PRODUCT.parse().unwrap());
+        h.insert("X-Plex-Version", PLEX_VERSION.parse().unwrap());
+        h.insert("X-Plex-Platform", PLEX_PLATFORM.parse().unwrap());
+        h
+    }
+
+    async fn get_json(&self, path: &str) -> Result<String> {
         let url = format!("{}{}", self.server_url, path);
         Ok(self
             .http
             .get(&url)
-            .header("X-Plex-Token", &self.token)
+            .headers(Self::plex_headers(&self.token, &self.client_id))
             .header("Accept", "application/json")
-            .send()?
-            .text()?)
+            .send()
+            .await?
+            .text()
+            .await?)
     }
 
-    pub fn get_libraries(&self) -> Result<Vec<Library>> {
-        let text = self.get_json("/library/sections")?;
+    pub async fn get_libraries(&self) -> Result<Vec<Library>> {
+        let text = self.get_json("/library/sections").await?;
         let resp: PlexResponse<LibraryContainer> = serde_json::from_str(&text)?;
         Ok(resp.media_container.directory.unwrap_or_default())
     }
 
-    pub fn get_library_items(&self, section_id: &str) -> Result<Vec<MediaItem>> {
-        let text = self.get_json(&format!("/library/sections/{}/all", section_id))?;
+    pub async fn get_library_items(&self, section_id: &str) -> Result<Vec<MediaItem>> {
+        let text = self
+            .get_json(&format!("/library/sections/{}/all", section_id))
+            .await?;
         let resp: PlexResponse<MetadataContainer> = serde_json::from_str(&text)?;
         Ok(resp.media_container.metadata.unwrap_or_default())
     }
 
-    pub fn get_children(&self, rating_key: &str) -> Result<Vec<MediaItem>> {
-        let text = self.get_json(&format!("/library/metadata/{}/children", rating_key))?;
+    pub async fn get_children(&self, rating_key: &str) -> Result<Vec<MediaItem>> {
+        let text = self
+            .get_json(&format!("/library/metadata/{}/children", rating_key))
+            .await?;
         let resp: PlexResponse<MetadataContainer> = serde_json::from_str(&text)?;
         Ok(resp.media_container.metadata.unwrap_or_default())
     }
 
-    pub fn get_on_deck(&self) -> Result<Vec<MediaItem>> {
-        let text = self.get_json("/library/onDeck")?;
+    pub async fn get_on_deck(&self) -> Result<Vec<MediaItem>> {
+        let text = self.get_json("/library/onDeck").await?;
         let resp: PlexResponse<MetadataContainer> = serde_json::from_str(&text)?;
         Ok(resp.media_container.metadata.unwrap_or_default())
     }
 
-    pub fn get_recently_added(&self) -> Result<Vec<MediaItem>> {
-        let text = self.get_json("/library/recentlyAdded")?;
+    pub async fn get_recently_added(&self) -> Result<Vec<MediaItem>> {
+        let text = self.get_json("/library/recentlyAdded").await?;
         let resp: PlexResponse<MetadataContainer> = serde_json::from_str(&text)?;
         Ok(resp.media_container.metadata.unwrap_or_default())
     }
 
-    pub fn search(&self, query: &str) -> Result<Vec<MediaItem>> {
+    pub async fn search(&self, query: &str) -> Result<Vec<MediaItem>> {
         let encoded = urlencoding::encode(query);
-        let text = self.get_json(&format!("/search?query={}", encoded))?;
+        let text = self
+            .get_json(&format!("/search?query={}", encoded))
+            .await?;
         let resp: PlexResponse<MetadataContainer> = serde_json::from_str(&text)?;
         Ok(resp.media_container.metadata.unwrap_or_default())
+    }
+
+    pub async fn report_progress(
+        &self,
+        rating_key: &str,
+        offset_ms: i64,
+        state: &str,
+        duration_ms: i64,
+    ) -> Result<()> {
+        let url = format!(
+            "{}/:/timeline?ratingKey={}&key=%2Flibrary%2Fmetadata%2F{}&state={}&time={}&duration={}&X-Plex-Token={}",
+            self.server_url, rating_key, rating_key, state, offset_ms, duration_ms, self.token
+        );
+        let _ = self
+            .http
+            .get(&url)
+            .headers(Self::plex_headers(&self.token, &self.client_id))
+            .send()
+            .await;
+        Ok(())
     }
 
     pub fn stream_url(&self, part_key: &str) -> String {
@@ -88,14 +136,22 @@ impl PlexClient {
     }
 
     pub fn poster_url(&self, thumb: &str) -> String {
+        let encoded_url = urlencoding::encode(thumb);
+        format!(
+            "{}/photo/:/transcode?url={}&width=300&height=450&minSize=1&X-Plex-Token={}",
+            self.server_url, encoded_url, self.token
+        )
+    }
+
+    pub fn poster_url_full(&self, thumb: &str) -> String {
         format!(
             "{}{}?X-Plex-Token={}",
             self.server_url, thumb, self.token
         )
     }
 
-    pub fn download_image(&self, url: &str) -> Result<Vec<u8>> {
-        Ok(self.http.get(url).send()?.bytes()?.to_vec())
+    pub async fn download_image(&self, url: &str) -> Result<Vec<u8>> {
+        Ok(self.http.get(url).send().await?.bytes().await?.to_vec())
     }
 }
 

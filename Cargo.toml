@@ -5,13 +5,16 @@ edition = "2021"
 description = "A native Plex media client for Linux"
 
 [dependencies]
-gtk4 = "0.9"
-libadwaita = "0.7"
+gtk4 = { version = "0.9", features = ["v4_14"] }
+libadwaita = { version = "0.7", features = ["v1_5"] }
 gdk-pixbuf = "0.20"
-reqwest = { version = "0.12", features = ["blocking", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "6"
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
 urlencoding = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "time", "process", "fs"] }
+libmpv2 = { version = "5", features = ["render"] }
+libc = "0.2"
