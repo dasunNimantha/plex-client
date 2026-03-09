@@ -85,6 +85,13 @@ fn create_mpv(hwdec: &str) -> Option<Mpv> {
         init.set_property("vo", "libmpv")?;
         init.set_property("hwdec", hwdec_val.as_str())?;
         init.set_property("video-timing-offset", 0i64)?;
+        init.set_property("opengl-swapinterval", 0i64)?;
+        init.set_property("video-sync", "audio")?;
+        init.set_property("interpolation", "no")?;
+        init.set_property("cache", "yes")?;
+        init.set_property("demuxer-max-bytes", "150MiB")?;
+        init.set_property("demuxer-max-back-bytes", "75MiB")?;
+        init.set_property("vd-lavc-threads", 0i64)?;
         init.set_property("tls-verify", false)?;
         init.set_property("tls-ca-file", "")?;
         Ok(())
@@ -336,7 +343,7 @@ impl PlayerWidget {
         });
 
         let gl_area_weak = gl_area.downgrade();
-        glib::timeout_add_local(Duration::from_millis(16), move || {
+        glib::timeout_add_local(Duration::from_millis(4), move || {
             if needs_render.swap(false, Ordering::SeqCst) {
                 if let Some(gl_area) = gl_area_weak.upgrade() {
                     gl_area.queue_render();

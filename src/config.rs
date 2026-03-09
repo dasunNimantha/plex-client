@@ -4,12 +4,18 @@ use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum HwdecMode {
+    #[serde(rename = "vaapi")]
+    Vaapi,
     #[serde(rename = "vaapi-copy")]
     VaapiCopy,
+    #[serde(rename = "nvdec")]
+    Nvdec,
     #[serde(rename = "nvdec-copy")]
     NvdecCopy,
     #[serde(rename = "vdpau-copy")]
     VdpauCopy,
+    #[serde(rename = "auto")]
+    Auto,
     #[serde(rename = "auto-copy")]
     AutoCopy,
     #[serde(rename = "no")]
@@ -19,9 +25,12 @@ pub enum HwdecMode {
 impl HwdecMode {
     pub fn as_mpv_value(&self) -> &str {
         match self {
+            Self::Vaapi => "vaapi",
             Self::VaapiCopy => "vaapi-copy",
+            Self::Nvdec => "nvdec",
             Self::NvdecCopy => "nvdec-copy",
             Self::VdpauCopy => "vdpau-copy",
+            Self::Auto => "auto",
             Self::AutoCopy => "auto-copy",
             Self::None => "no",
         }
@@ -29,10 +38,13 @@ impl HwdecMode {
 
     pub fn label(&self) -> &str {
         match self {
-            Self::VaapiCopy => "VA-API (Intel / AMD)",
-            Self::NvdecCopy => "NVDEC (NVIDIA)",
+            Self::Vaapi => "VA-API zero-copy (Intel / AMD)",
+            Self::VaapiCopy => "VA-API copy (Intel / AMD)",
+            Self::Nvdec => "NVDEC zero-copy (NVIDIA)",
+            Self::NvdecCopy => "NVDEC copy (NVIDIA)",
             Self::VdpauCopy => "VDPAU (NVIDIA legacy)",
-            Self::AutoCopy => "Auto",
+            Self::Auto => "Auto",
+            Self::AutoCopy => "Auto (copy)",
             Self::None => "Software (CPU)",
         }
     }
@@ -81,15 +93,23 @@ pub fn detect_available_hwdec() -> Vec<DetectedHwdec> {
 
     if has_vaapi {
         available.push(DetectedHwdec {
+            mode: HwdecMode::Vaapi,
+            label: "VA-API zero-copy (Intel / AMD)".into(),
+        });
+        available.push(DetectedHwdec {
             mode: HwdecMode::VaapiCopy,
-            label: "VA-API (Intel / AMD)".into(),
+            label: "VA-API copy (Intel / AMD, fallback)".into(),
         });
     }
 
     if has_nvidia {
         available.push(DetectedHwdec {
+            mode: HwdecMode::Nvdec,
+            label: "NVDEC zero-copy (NVIDIA)".into(),
+        });
+        available.push(DetectedHwdec {
             mode: HwdecMode::NvdecCopy,
-            label: "NVDEC (NVIDIA)".into(),
+            label: "NVDEC copy (NVIDIA, fallback)".into(),
         });
     }
 
@@ -101,8 +121,13 @@ pub fn detect_available_hwdec() -> Vec<DetectedHwdec> {
     }
 
     available.push(DetectedHwdec {
-        mode: HwdecMode::AutoCopy,
+        mode: HwdecMode::Auto,
         label: "Auto (let mpv decide)".into(),
+    });
+
+    available.push(DetectedHwdec {
+        mode: HwdecMode::AutoCopy,
+        label: "Auto copy (safe fallback)".into(),
     });
 
     available.push(DetectedHwdec {
