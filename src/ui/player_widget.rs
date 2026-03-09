@@ -98,8 +98,8 @@ fn create_mpv(hwdec: &str) -> Option<Mpv> {
 }
 
 pub struct PlayerWidget {
-    pub widget: adw::ToolbarView,
-    inner_box: gtk::Box,
+    pub widget: gtk::Box,
+    video_box: gtk::Box,
     header: adw::HeaderBar,
     controls: gtk::Box,
     gl_area: Rc<RefCell<Option<gtk::GLArea>>>,
@@ -123,9 +123,10 @@ pub struct PlayerWidget {
 
 impl PlayerWidget {
     pub fn new(hwdec: &str) -> Rc<Self> {
-        let toolbar_view = adw::ToolbarView::new();
-        toolbar_view.set_vexpand(true);
-        toolbar_view.set_hexpand(true);
+        // Outer vertical box: header -> video area -> controls
+        let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        outer.set_vexpand(true);
+        outer.set_hexpand(true);
 
         // Header bar with window controls
         let header = adw::HeaderBar::new();
@@ -142,12 +143,13 @@ impl PlayerWidget {
         fullscreen_btn.set_tooltip_text(Some("Toggle fullscreen"));
         header.pack_end(&fullscreen_btn);
 
-        toolbar_view.add_top_bar(&header);
+        outer.append(&header);
 
-        // Inner box holds GL area (lazy) + controls bar
-        let inner_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        inner_box.set_vexpand(true);
-        inner_box.set_hexpand(true);
+        // Video area (GL area gets prepended here lazily)
+        let video_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        video_box.set_vexpand(true);
+        video_box.set_hexpand(true);
+        outer.append(&video_box);
 
         // Controls bar
         let controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
@@ -183,13 +185,12 @@ impl PlayerWidget {
         title_label.set_margin_end(8);
         controls.append(&title_label);
 
-        inner_box.append(&controls);
-        toolbar_view.set_content(Some(&inner_box));
+        outer.append(&controls);
 
         let pw = Rc::new(Self {
-            widget: toolbar_view,
-            inner_box,
-            header: header.clone(),
+            widget: outer,
+            video_box,
+            header,
             controls,
             gl_area: Rc::new(RefCell::new(None)),
             play_pause_btn,
@@ -248,8 +249,7 @@ impl PlayerWidget {
         gl_area.set_hexpand(true);
         gl_area.set_auto_render(false);
 
-        // Insert at position 0 (before controls)
-        self.inner_box.prepend(&gl_area);
+        self.video_box.prepend(&gl_area);
 
         // Set up render callback
         let pw_weak = Rc::downgrade(self);
@@ -473,7 +473,7 @@ impl PlayerWidget {
         self.controls.set_visible(false);
         self.fullscreen_btn.set_icon_name("view-restore-symbolic");
         self.fullscreen_btn.set_tooltip_text(Some("Exit fullscreen"));
-        self.inner_box.set_cursor_from_name(Some("none"));
+        self.video_box.set_cursor_from_name(Some("none"));
     }
 
     fn exit_fullscreen(&self, window: &gtk::Window) {
@@ -482,7 +482,7 @@ impl PlayerWidget {
         self.controls.set_visible(true);
         self.fullscreen_btn.set_icon_name("view-fullscreen-symbolic");
         self.fullscreen_btn.set_tooltip_text(Some("Toggle fullscreen"));
-        self.inner_box.set_cursor(None::<&gtk::gdk::Cursor>);
+        self.video_box.set_cursor(None::<&gtk::gdk::Cursor>);
         if let Some(id) = self.controls_timeout.borrow_mut().take() {
             id.remove();
         }
@@ -497,7 +497,7 @@ impl PlayerWidget {
         }
         self.header.set_visible(true);
         self.controls.set_visible(true);
-        self.inner_box.set_cursor(None::<&gtk::gdk::Cursor>);
+        self.video_box.set_cursor(None::<&gtk::gdk::Cursor>);
 
         if let Some(id) = self.controls_timeout.borrow_mut().take() {
             id.remove();
@@ -510,7 +510,7 @@ impl PlayerWidget {
                 if win.is_fullscreen() {
                     pw.header.set_visible(false);
                     pw.controls.set_visible(false);
-                    pw.inner_box.set_cursor_from_name(Some("none"));
+                    pw.video_box.set_cursor_from_name(Some("none"));
                 }
             }
             *pw.controls_timeout.borrow_mut() = None;
@@ -531,7 +531,7 @@ impl PlayerWidget {
                 }
             }
         });
-        self.inner_box.add_controller(dbl_click);
+        self.video_box.add_controller(dbl_click);
 
         // Mouse motion shows controls briefly in fullscreen
         let motion = gtk::EventControllerMotion::new();
@@ -545,7 +545,7 @@ impl PlayerWidget {
                 }
             }
         });
-        self.inner_box.add_controller(motion);
+        self.video_box.add_controller(motion);
 
         // Escape key exits fullscreen
         let key_ctrl = gtk::EventControllerKey::new();
