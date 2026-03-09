@@ -100,6 +100,8 @@ fn create_mpv(hwdec: &str) -> Option<Mpv> {
 pub struct PlayerWidget {
     pub widget: adw::ToolbarView,
     inner_box: gtk::Box,
+    header: adw::HeaderBar,
+    controls: gtk::Box,
     gl_area: Rc<RefCell<Option<gtk::GLArea>>>,
     play_pause_btn: gtk::Button,
     seek_bar: gtk::Scale,
@@ -116,6 +118,7 @@ pub struct PlayerWidget {
     initialized: Rc<Cell<bool>>,
     hwdec: String,
     fullscreen_btn: gtk::Button,
+    controls_timeout: Rc<RefCell<Option<glib::SourceId>>>,
 }
 
 impl PlayerWidget {
@@ -186,6 +189,8 @@ impl PlayerWidget {
         let pw = Rc::new(Self {
             widget: toolbar_view,
             inner_box,
+            header: header.clone(),
+            controls,
             gl_area: Rc::new(RefCell::new(None)),
             play_pause_btn,
             seek_bar,
@@ -202,9 +207,11 @@ impl PlayerWidget {
             initialized: Rc::new(Cell::new(false)),
             hwdec: hwdec.to_string(),
             fullscreen_btn,
+            controls_timeout: Rc::new(RefCell::new(None)),
         });
 
         pw.setup_control_callbacks(&stop_btn, &back_btn);
+        pw.setup_fullscreen_gestures();
 
         pw
     }
@@ -373,18 +380,9 @@ impl PlayerWidget {
 
         self.fullscreen_btn.connect_clicked({
             let pw = pw.clone();
-            move |btn| {
-                let Some(pw) = pw.upgrade() else { return };
-                if let Some(window) = pw.widget.root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
-                    if window.is_fullscreen() {
-                        window.unfullscreen();
-                        btn.set_icon_name("view-fullscreen-symbolic");
-                        btn.set_tooltip_text(Some("Toggle fullscreen"));
-                    } else {
-                        window.fullscreen();
-                        btn.set_icon_name("view-restore-symbolic");
-                        btn.set_tooltip_text(Some("Exit fullscreen"));
-                    }
+            move |_| {
+                if let Some(pw) = pw.upgrade() {
+                    pw.toggle_fullscreen();
                 }
             }
         });
@@ -458,6 +456,116 @@ impl PlayerWidget {
         });
     }
 
+    fn toggle_fullscreen(self: &Rc<Self>) {
+        let Some(window) = self.widget.root().and_then(|r| r.downcast::<gtk::Window>().ok()) else {
+            return;
+        };
+        if window.is_fullscreen() {
+            self.exit_fullscreen(&window);
+        } else {
+            self.enter_fullscreen(&window);
+        }
+    }
+
+    fn enter_fullscreen(&self, window: &gtk::Window) {
+        window.fullscreen();
+        self.header.set_visible(false);
+        self.controls.set_visible(false);
+        self.fullscreen_btn.set_icon_name("view-restore-symbolic");
+        self.fullscreen_btn.set_tooltip_text(Some("Exit fullscreen"));
+        self.inner_box.set_cursor_from_name(Some("none"));
+    }
+
+    fn exit_fullscreen(&self, window: &gtk::Window) {
+        window.unfullscreen();
+        self.header.set_visible(true);
+        self.controls.set_visible(true);
+        self.fullscreen_btn.set_icon_name("view-fullscreen-symbolic");
+        self.fullscreen_btn.set_tooltip_text(Some("Toggle fullscreen"));
+        self.inner_box.set_cursor(None::<&gtk::gdk::Cursor>);
+        if let Some(id) = self.controls_timeout.borrow_mut().take() {
+            id.remove();
+        }
+    }
+
+    fn show_controls_briefly(self: &Rc<Self>) {
+        let Some(window) = self.widget.root().and_then(|r| r.downcast::<gtk::Window>().ok()) else {
+            return;
+        };
+        if !window.is_fullscreen() {
+            return;
+        }
+        self.header.set_visible(true);
+        self.controls.set_visible(true);
+        self.inner_box.set_cursor(None::<&gtk::gdk::Cursor>);
+
+        if let Some(id) = self.controls_timeout.borrow_mut().take() {
+            id.remove();
+        }
+
+        let pw = Rc::downgrade(self);
+        let id = glib::timeout_add_local_once(Duration::from_secs(3), move || {
+            let Some(pw) = pw.upgrade() else { return };
+            if let Some(win) = pw.widget.root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
+                if win.is_fullscreen() {
+                    pw.header.set_visible(false);
+                    pw.controls.set_visible(false);
+                    pw.inner_box.set_cursor_from_name(Some("none"));
+                }
+            }
+            *pw.controls_timeout.borrow_mut() = None;
+        });
+        *self.controls_timeout.borrow_mut() = Some(id);
+    }
+
+    fn setup_fullscreen_gestures(self: &Rc<Self>) {
+        // Double-click on inner_box to toggle fullscreen
+        let dbl_click = gtk::GestureClick::new();
+        dbl_click.set_button(1);
+        let pw = Rc::downgrade(self);
+        dbl_click.connect_released(move |gesture, n_press, _, _| {
+            if n_press == 2 {
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                if let Some(pw) = pw.upgrade() {
+                    pw.toggle_fullscreen();
+                }
+            }
+        });
+        self.inner_box.add_controller(dbl_click);
+
+        // Mouse motion shows controls briefly in fullscreen
+        let motion = gtk::EventControllerMotion::new();
+        let pw = Rc::downgrade(self);
+        motion.connect_motion(move |_, _, _| {
+            if let Some(pw) = pw.upgrade() {
+                if let Some(win) = pw.widget.root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
+                    if win.is_fullscreen() {
+                        pw.show_controls_briefly();
+                    }
+                }
+            }
+        });
+        self.inner_box.add_controller(motion);
+
+        // Escape key exits fullscreen
+        let key_ctrl = gtk::EventControllerKey::new();
+        let pw = Rc::downgrade(self);
+        key_ctrl.connect_key_pressed(move |_, key, _, _| {
+            if key == gtk::gdk::Key::Escape {
+                if let Some(pw) = pw.upgrade() {
+                    if let Some(win) = pw.widget.root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
+                        if win.is_fullscreen() {
+                            pw.exit_fullscreen(&win);
+                            return glib::Propagation::Stop;
+                        }
+                    }
+                }
+            }
+            glib::Propagation::Proceed
+        });
+        self.widget.add_controller(key_ctrl);
+    }
+
     pub fn play(self: &Rc<Self>, url: &str, title: &str) {
         self.title_label.set_label(title);
         self.header_title.set_title(title);
@@ -488,8 +596,7 @@ impl PlayerWidget {
         }
         if let Some(window) = self.widget.root().and_then(|r| r.downcast::<gtk::Window>().ok()) {
             if window.is_fullscreen() {
-                window.unfullscreen();
-                self.fullscreen_btn.set_icon_name("view-fullscreen-symbolic");
+                self.exit_fullscreen(&window);
             }
         }
         self.fire_on_stop();
